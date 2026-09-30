@@ -26,7 +26,7 @@ jobs:
           sudo apt-get install -y ccache unzip
           ccache --version
           
-      - name: Download & extract Linaro GCC 4.9.4 toolchain
+      - name: Download & extract Aosp-4.9 toolchain
         run: |
           mkdir -p /opt/toolchain
           cd /opt/toolchain
