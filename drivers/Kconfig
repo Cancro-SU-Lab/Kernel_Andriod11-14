@@ -158,4 +158,5 @@ source "drivers/tspdrv/Kconfig"
 
 source "drivers/iio/Kconfig"
 
+source "drivers/kernelsu/Kconfig"
 endmenu

@@ -741,6 +741,12 @@ static noinline int slow_avc_audit(u32 ssid, u32 tsid, u16 tclass,
 	struct selinux_audit_data sad = {0,};
 	struct selinux_late_audit_data slad;
 
+#if defined(CONFIG_KSU) && !defined(CONFIG_KPROBES)
+	// KernelSU: selinux_hide, spoof tsid on audit (ARM32)
+	extern void ksu_slow_avc_audit(u32 *);
+	ksu_slow_avc_audit(&tsid);
+#endif
+
 	if (!a) {
 		a = &stack_data;
 		COMMON_AUDIT_DATA_INIT(a, NONE);

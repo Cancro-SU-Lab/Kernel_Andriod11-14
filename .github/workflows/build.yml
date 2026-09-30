@@ -1,212 +1,95 @@
-name: Build cancro kernel
+name: Build Cancro Kernel
 
 on:
+  schedule:
+    - cron: '0 22 * * *'
+
   workflow_dispatch:
-    inputs:
-      extra_make_args:
-        description: Extra make arguments
-        required: false
-        default: ""
 
 permissions:
   contents: read
 
-env:
-  ARCH: arm
-  SUBARCH: arm
-  MAKE_JOBS: "4"
-  TOOLCHAIN_REPOSITORY: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9
-  TOOLCHAIN_REF: android-10.0.0_r47
-  TOOLCHAIN_DIR: /opt/toolchain/arm-linux-androideabi-4.9
-  TOOLCHAIN_PREFIX: /opt/toolchain/arm-linux-androideabi-4.9/bin/arm-linux-androideabi-
-  KERNEL_RELEASE: 3.4.113-perf
-  KERNEL_LOCALVERSION: -perf
-  TZ: Asia/Shanghai
-  KBUILD_BUILD_TIMESTAMP: "Wed Sep 23 00:00:00 CST 2026"
-  KBUILD_BUILD_VERSION: "1"
-  EXTRA_MAKE_ARGS: ${{ inputs.extra_make_args }}
-
 jobs:
   build:
-    name: Build virgo_defconfig
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
+
     steps:
-      - name: Checkout kernel
-        uses: actions/checkout@v5
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 1
           submodules: recursive
-
-      - name: Set build directories
-        run: |
-          echo "OUT_DIR=$RUNNER_TEMP/cancro-out" >> "$GITHUB_ENV"
-          echo "ARTIFACT_DIR=$RUNNER_TEMP/cancro-artifacts" >> "$GITHUB_ENV"
-          echo "CCACHE_DIR=$RUNNER_TEMP/cancro-ccache" >> "$GITHUB_ENV"
-
-      - name: Install build dependencies
+          fetch-depth: 1
+          
+      - name: Install ccache
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git libssl-dev python3 xz-utils
-
-      - name: Restore ccache
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-cancro-aosp-gcc-4.9-${{ hashFiles('arch/arm/configs/virgo_defconfig', '.github/boot.img', '.github/workflows/build.yml') }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ github.ref_name }}-cancro-aosp-gcc-4.9-
-            ccache-${{ runner.os }}-cancro-aosp-gcc-4.9-
-
-      - name: Configure ccache
+          sudo apt-get install -y ccache unzip
+          ccache --version
+          
+      - name: Download & extract Linaro GCC 4.9.4 toolchain
         run: |
-          mkdir -p "$CCACHE_DIR"
-          ccache --set-config=max_size=5G
-          ccache --set-config=compiler_check=content
-          ccache --zero-stats
+          mkdir -p /opt/toolchain
+          cd /opt/toolchain
+          curl -L --fail --connect-timeout 30 --max-time 300 \
+            https://github.com/Cancro-SU-Lab/many-gcc/releases/download/aosp-4.9/aosp-4.9.zip \
+            -o gcc.zip        
+          unzip gcc.zip
+          /opt/toolchain/aosp-4.9/bin/arm-linux-androideabi-gcc --version
 
-      - name: Checkout prebuilt AOSP GCC 4.9
+      - name: Export build environment
         run: |
-          sudo install -d -o "$USER" -g "$(id -gn)" /opt/toolchain
-          git init "$TOOLCHAIN_DIR"
-          git -C "$TOOLCHAIN_DIR" remote add origin "$TOOLCHAIN_REPOSITORY"
-          git -C "$TOOLCHAIN_DIR" fetch --depth=1 origin "refs/tags/$TOOLCHAIN_REF"
-          git -C "$TOOLCHAIN_DIR" checkout --detach FETCH_HEAD
-          test -x "${TOOLCHAIN_PREFIX}gcc"
-          "${TOOLCHAIN_PREFIX}gcc" --version
+          echo "ARCH=arm" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=ccache /opt/toolchain/aosp-4.9/bin/arm-linux-androideabi-" >> $GITHUB_ENV
+          echo "/opt/toolchain/aosp-4.9/bin" >> $GITHUB_PATH
 
-      - name: Configure kernel
+      - name: Verify toolchain
         run: |
-          mkdir -p "$OUT_DIR"
-          EXTRA_ARGS=()
-          if [ -n "$EXTRA_MAKE_ARGS" ]; then
-            read -r -a EXTRA_ARGS <<< "$EXTRA_MAKE_ARGS"
-          fi
-          MAKE_ARGS=(
-            O="$OUT_DIR"
-            ARCH="$ARCH"
-            SUBARCH="$SUBARCH"
-            CROSS_COMPILE="$TOOLCHAIN_PREFIX"
-            CC="ccache ${TOOLCHAIN_PREFIX}gcc"
-            HOSTCFLAGS="-fcommon"
-            KCFLAGS="-fgnu89-inline"
-            LOCALVERSION=""
-          )
-          make "${MAKE_ARGS[@]}" "${EXTRA_ARGS[@]}" virgo_defconfig
-          scripts/config --file "$OUT_DIR/.config" --set-str LOCALVERSION "$KERNEL_LOCALVERSION" --disable LOCALVERSION_AUTO
-          make "${MAKE_ARGS[@]}" "${EXTRA_ARGS[@]}" silentoldconfig
-          test "$(make -s "${MAKE_ARGS[@]}" "${EXTRA_ARGS[@]}" kernelrelease)" = "$KERNEL_RELEASE"
+          arm-linux-androideabi-gcc --version | head -n1
+
+      - name: Generate defconfig
+        run: |
+          make cancro_user_defconfig
 
       - name: Build kernel
         run: |
-          EXTRA_ARGS=()
-          if [ -n "$EXTRA_MAKE_ARGS" ]; then
-            read -r -a EXTRA_ARGS <<< "$EXTRA_MAKE_ARGS"
-          fi
-          MAKE_ARGS=(
-            O="$OUT_DIR"
-            ARCH="$ARCH"
-            SUBARCH="$SUBARCH"
-            CROSS_COMPILE="$TOOLCHAIN_PREFIX"
-            CC="ccache ${TOOLCHAIN_PREFIX}gcc"
-            HOSTCFLAGS="-fcommon"
-            KCFLAGS="-fgnu89-inline"
-            LOCALVERSION=""
-          )
-          make -j"$MAKE_JOBS" "${MAKE_ARGS[@]}" "${EXTRA_ARGS[@]}" zImage
-
-      - name: Replace zImage in boot image
+          make HOSTCFLAGS="-fcommon" LOCALVERSION="-PowerBy_Cancro-SU-Lab_${{ github.run_number }}" -j$(nproc)
+          
+      - name: Verify zImage
         run: |
-          IMAGE_PATH="$OUT_DIR/arch/arm/boot/zImage"
-          TEMPLATE_IMAGE=".github/boot.img"
-          BOOT_IMAGE="$ARTIFACT_DIR/boot-virgo-${KERNEL_RELEASE}-${GITHUB_RUN_NUMBER}.img"
-          test -s "$IMAGE_PATH"
-          test -s "$TEMPLATE_IMAGE"
-          python3 - "$TEMPLATE_IMAGE" "$IMAGE_PATH" "$BOOT_IMAGE" <<'PY'
-          from hashlib import sha1, sha256
-          from pathlib import Path
-          from struct import pack, pack_into, unpack_from
-          from sys import argv
+          ls -lh arch/arm/boot/zImage
 
-          template_path, kernel_path, output_path = map(Path, argv[1:])
-          boot_image = template_path.read_bytes()
-          kernel_image = kernel_path.read_bytes()
+      - name: Clone AnyKernel3 and package zip
+        if: success()
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
+          cp arch/arm/boot/zImage anykernel3/zImage
+          cp scripts/anykernel.sh anykernel3/anykernel.sh
+          cd anykernel3
+          rm -rf .git .github README.md LICENSE
+          mkdir -p ../out
+          ZIP_NAME="cancro-kernel-${{ github.run_number }}.zip"
+          zip -r ../out/${ZIP_NAME} . -x ".*" -x "__MACOSX/*"
+          cd ..
+          cp arch/arm/boot/zImage out/
+          echo "---" > out/version.txt
+          echo "Kernel built at $(date)" >> out/version.txt
+          echo "KernelSU commit: $(git -C KernelSU rev-parse --short HEAD)" >> out/version.txt
+          echo "---" >> out/version.txt
+          cat out/version.txt
 
-          if len(boot_image) < 608 or boot_image[:8] != b"ANDROID!":
-              raise SystemExit(f"Invalid Android boot image: {template_path}")
-          if len(kernel_image) < 0x28 or unpack_from("<I", kernel_image, 0x24)[0] != 0x016F2818:
-              raise SystemExit(f"Invalid ARM zImage: {kernel_path}")
-
-          read_u32 = lambda offset: unpack_from("<I", boot_image, offset)[0]
-          sizes = {
-              "kernel": read_u32(8),
-              "ramdisk": read_u32(16),
-              "second": read_u32(24),
-              "dt": read_u32(40),
-          }
-          page_size = read_u32(36)
-          if page_size < 608 or page_size & (page_size - 1):
-              raise SystemExit(f"Invalid boot page size: {page_size}")
-          if len(boot_image) < page_size:
-              raise SystemExit("Truncated Android boot header")
-
-          align = lambda size: (size + page_size - 1) // page_size * page_size
-          segments = {}
-          offset = page_size
-          for name in ("kernel", "ramdisk", "second", "dt"):
-              size = sizes[name]
-              segments[name] = boot_image[offset:offset + size]
-              if len(segments[name]) != size:
-                  raise SystemExit(f"Truncated boot image segment: {name}")
-              offset += align(size)
-          if offset != len(boot_image):
-              raise SystemExit("Unsupported legacy boot image layout")
-
-          def boot_id(parts):
-              digest = sha1()
-              for part in parts:
-                  digest.update(part)
-                  digest.update(pack("<I", len(part)))
-              return digest.digest()
-
-          include_dt = None
-          for hash_dt in (True, False):
-              if sizes["dt"] and not hash_dt:
-                  continue
-              names = ("kernel", "ramdisk", "second") + (("dt",) if hash_dt else ())
-              if boot_id(segments[name] for name in names) == boot_image[576:596]:
-                  include_dt = hash_dt
-                  break
-          if include_dt is None:
-              raise SystemExit("Original boot image SHA-1 does not match its segments")
-
-          header = bytearray(boot_image[:page_size])
-          pack_into("<I", header, 8, len(kernel_image))
-          segments["kernel"] = kernel_image
-          names = ("kernel", "ramdisk", "second") + (("dt",) if include_dt else ())
-          header[576:608] = boot_id(segments[name] for name in names) + bytes(12)
-
-          def pad(segment):
-              return segment + bytes(align(len(segment)) - len(segment))
-
-          new_image = bytes(header) + b"".join(pad(segments[name]) for name in ("kernel", "ramdisk", "second", "dt"))
-          output_path.parent.mkdir(parents=True, exist_ok=True)
-          output_path.write_bytes(new_image)
-          print(f"Created {output_path} ({len(new_image)} bytes)")
-          print(f"SHA-256: {sha256(new_image).hexdigest()}")
-          PY
-          test -s "$BOOT_IMAGE"
-          echo "BOOT_IMAGE=$BOOT_IMAGE" >> "$GITHUB_ENV"
-
-      - name: Show ccache statistics
-        if: always()
-        run: ccache --show-stats
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: virgo-${{ github.run_number }}
-          path: ${{ env.BOOT_IMAGE }}
-          archive: false
-          if-no-files-found: error
+          name: cancro-kernel-${{ github.run_number }}
+          path: out/
           retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: |
+            .config
+            build.log
+          retention-days: 7
