@@ -1,68 +1,70 @@
-name: Update KernelSU Submodule
+name: Dump KernelSU Submodule
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: '0 21 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: update-kernelsu-${{ github.ref }}
+  group: dump-kernelsu-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  update:
+  dump:
     if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+
+    env:
+      TARGET_BRANCH: ${{ github.ref_name }}
+      UPDATE_MESSAGE: 'chore: dump KernelSU submodule to latest [skip ci]'
+      BOT_EMAIL: 'github-actions[bot]@users.noreply.github.com'
+
     steps:
-      - name: Checkout selected branch
-        uses: actions/checkout@v5
+      - name: Checkout parent repository
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-          submodules: recursive
+          submodules: false
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update and commit KernelSU
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "$BOT_EMAIL"
+
+      - name: Update KernelSU and commit if changed
         shell: bash
-        env:
-          TARGET_BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+
           original_head=$(git rev-parse HEAD)
-          commit_message='Update KernelSU Submodule'
-          kernelsu_branch=$(git config --file .gitmodules submodule.KernelSU.branch)
+          current_ksu=$(git rev-parse HEAD:KernelSU)
 
-          if [ -z "$kernelsu_branch" ]; then
-            echo 'KernelSU branch is not configured in .gitmodules.' >&2
-            exit 1
-          fi
+          git submodule update --init --remote --checkout -- KernelSU
+          upstream_ksu=$(git -C KernelSU rev-parse HEAD)
 
-          git submodule sync -- KernelSU
-          pinned_commit=$(git -C KernelSU rev-parse HEAD)
-          git -C KernelSU fetch --no-tags origin "$kernelsu_branch"
-          upstream_commit=$(git -C KernelSU rev-parse FETCH_HEAD)
-          echo "KernelSU pinned commit:   $pinned_commit"
-          echo "KernelSU upstream commit: $upstream_commit ($kernelsu_branch)"
-          git -C KernelSU checkout --detach "$upstream_commit"
-          git -C KernelSU submodule update --init --recursive
-          git add -- KernelSU
-
-          if git diff --cached --quiet -- KernelSU; then
-            echo 'KernelSU is already up to date.'
+          if [[ "$current_ksu" == "$upstream_ksu" ]]; then
+            echo "KernelSU already up to date, nothing to commit."
             exit 0
           fi
 
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- KernelSU
 
-          if [ "$(git log -1 --format=%s)" = "$commit_message" ]; then
-            git commit --amend --no-edit
+          last_subject=$(git log -1 --format=%s)
+          last_author=$(git log -1 --format=%ae)
+
+          if [[ "$last_subject" == "$UPDATE_MESSAGE" && "$last_author" == "$BOT_EMAIL" ]]; then
+            echo "Amending the previous KernelSU update commit."
+            git commit --amend --no-edit --reset-author
+            git push \
+              --force-with-lease="refs/heads/$TARGET_BRANCH:$original_head" \
+              origin "HEAD:refs/heads/$TARGET_BRANCH"
           else
-            git commit -m "$commit_message"
+            echo "Creating a new KernelSU update commit."
+            git commit -m "$UPDATE_MESSAGE"
+            git push origin "HEAD:refs/heads/$TARGET_BRANCH"
           fi
-
-          git push --force-with-lease="refs/heads/$TARGET_BRANCH:$original_head" \
-            origin "HEAD:refs/heads/$TARGET_BRANCH"
