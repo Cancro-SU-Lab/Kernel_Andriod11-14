@@ -52,7 +52,8 @@ jobs:
 
       - name: Build kernel
         run: |
-          make HOSTCFLAGS="-fcommon" LOCALVERSION="-PowerBy_Cancro-SU-Lab_${{ github.run_number }}" -j$(nproc)
+          set -o pipefail
+          make HOSTCFLAGS="-fcommon" LOCALVERSION="-PowerBy_Cancro-SU-Lab_${{ github.run_number }}" -j$(nproc) 2>&1 | tee build.log
           
       - name: Verify zImage
         run: |
