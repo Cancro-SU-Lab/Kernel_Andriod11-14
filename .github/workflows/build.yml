@@ -19,7 +19,14 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
-          
+
+      - name: Apply SUSFS hooks to KernelSU submodule
+        run: |
+          cd KernelSU
+          git apply -v ../kernelsu_susfs.patch
+          echo "--- KernelSU patched files ---"
+          git --no-pager diff --stat
+
       - name: Install ccache
         run: |
           sudo apt-get update

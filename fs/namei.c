@@ -38,6 +38,10 @@
 #include "internal.h"
 #include "mount.h"
 
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
+
 /* [Feb-1997 T. Schoebel-Theuer]
  * Fundamental changes in the pathname lookup mechanisms (namei)
  * were necessary because of omirr.  The reason is that omirr needs
@@ -3119,6 +3123,13 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 {
 	struct nameidata nd;
 	struct file *filp;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	int error;
+
+	if (susfs_sus_path_by_filename(pathname, &error, SYSCALL_FAMILY_ALL_ENOENT)) {
+		return ERR_PTR(error);
+	}
+#endif
 
 	filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_RCU);
 	if (unlikely(filp == ERR_PTR(-ECHILD)))
@@ -3296,6 +3307,18 @@ SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, umode_t, mode,
 	struct dentry *dentry;
 	struct path path;
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	struct filename* fname;
+	int status;
+
+	fname = getname_safe(filename);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_MKNOD);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+#endif
 
 	error = may_mknod(mode);
 	if (error)
@@ -3370,6 +3393,18 @@ SYSCALL_DEFINE3(mkdirat, int, dfd, const char __user *, pathname, umode_t, mode)
 	struct dentry *dentry;
 	struct path path;
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	struct filename* fname;
+	int status;
+
+	fname = getname_safe(pathname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_MKDIRAT);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+#endif
 
 	dentry = user_path_create(dfd, pathname, &path, 1);
 	if (IS_ERR(dentry))
@@ -3463,6 +3498,19 @@ static long do_rmdir(int dfd, const char __user *pathname)
 	struct filename *name;
 	struct dentry *dentry;
 	struct nameidata nd;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	struct filename* fname;
+	int status;
+
+	fname = getname_safe(pathname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_RMDIR);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+	error = 0;
+#endif
 
 	name = user_path_parent(dfd, pathname, &nd);
 	if (IS_ERR(name))
@@ -3566,6 +3614,18 @@ static long do_unlinkat(int dfd, const char __user *pathname)
 	struct dentry *dentry;
 	struct nameidata nd;
 	struct inode *inode = NULL;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	struct filename* fname;
+	int status;
+
+	fname = getname_safe(pathname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_UNLINKAT);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+#endif
 
 	name = user_path_parent(dfd, pathname, &nd);
 	if (IS_ERR(name))
@@ -3663,6 +3723,18 @@ SYSCALL_DEFINE3(symlinkat, const char __user *, oldname,
 	struct filename *from;
 	struct dentry *dentry;
 	struct path path;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	struct filename* fname;
+	int status;
+
+	fname = getname_safe(newname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_SYMLINKAT_NEWNAME);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+#endif
 
 	from = getname(oldname);
 	if (IS_ERR(from))
@@ -3760,6 +3832,26 @@ SYSCALL_DEFINE5(linkat, int, olddfd, const char __user *, oldname,
 	struct path old_path, new_path;
 	int how = 0;
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	struct filename* fname;
+	int status;
+
+	fname = getname_safe(oldname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_LINKAT_OLDNAME);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+
+	fname = getname_safe(newname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_LINKAT_NEWNAME);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+#endif
 
 	if ((flags & ~(AT_SYMLINK_FOLLOW | AT_EMPTY_PATH)) != 0)
 		return -EINVAL;
@@ -3981,6 +4073,28 @@ SYSCALL_DEFINE4(renameat, int, olddfd, const char __user *, oldname,
 	struct filename *from;
 	struct filename *to;
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	struct filename* fname;
+	int status;
+
+	/* linux-3.4 has no renameat2, reuse the same error mapping
+	 * (EXDEV for oldname, EXDEV for newname) on plain renameat. */
+	fname = getname_safe(oldname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_RENAMEAT2_OLDNAME);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+
+	fname = getname_safe(newname);
+	status = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_RENAMEAT2_NEWNAME);
+	putname_safe(fname);
+
+	if (status) {
+		return error;
+	}
+#endif
 
 	from = user_path_parent(olddfd, oldname, &oldnd);
 	if (IS_ERR(from)) {

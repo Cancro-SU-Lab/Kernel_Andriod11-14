@@ -1208,10 +1208,38 @@ static int do_umount(struct mount *mnt, int flags)
  * unixes. Our API is identical to OSF/1 to avoid making a mess of AMD
  */
 
+/*
+ * Backported from upstream ("vfs: add path_umount").
+ * linux-3.4 only offers the syscall entry point, susfs / KernelSU need a
+ * path based helper so they can umount without re-resolving a user string.
+ */
+int path_umount(struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	int retval;
+
+	retval = -EINVAL;
+	if (path->dentry != path->mnt->mnt_root)
+		goto dput_and_out;
+	if (!check_mnt(mnt))
+		goto dput_and_out;
+
+	retval = -EPERM;
+	if (!ns_capable(mnt->mnt_ns->user_ns, CAP_SYS_ADMIN))
+		goto dput_and_out;
+
+	retval = do_umount(mnt, flags);
+dput_and_out:
+	/* we mustn't call path_put() as that would clear mnt_expiry_mark */
+	dput(path->dentry);
+	mntput_no_expire(mnt);
+	return retval;
+}
+EXPORT_SYMBOL(path_umount);
+
 SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 {
 	struct path path;
-	struct mount *mnt;
 	int retval;
 	int lookup_flags = 0;
 
@@ -1224,22 +1252,8 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 	retval = user_path_at(AT_FDCWD, name, lookup_flags, &path);
 	if (retval)
 		goto out;
-	mnt = real_mount(path.mnt);
-	retval = -EINVAL;
-	if (path.dentry != path.mnt->mnt_root)
-		goto dput_and_out;
-	if (!check_mnt(mnt))
-		goto dput_and_out;
 
-	retval = -EPERM;
-	if (!ns_capable(mnt->mnt_ns->user_ns, CAP_SYS_ADMIN))
-		goto dput_and_out;
-
-	retval = do_umount(mnt, flags);
-dput_and_out:
-	/* we mustn't call path_put() as that would clear mnt_expiry_mark */
-	dput(path.dentry);
-	mntput_no_expire(mnt);
+	retval = path_umount(&path, flags);
 out:
 	return retval;
 }

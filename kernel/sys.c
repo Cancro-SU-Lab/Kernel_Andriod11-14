@@ -57,6 +57,10 @@
 #include <asm/io.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
+
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a,b)	(-EINVAL)
 #endif
@@ -1241,10 +1245,22 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	int errno = 0;
 
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	{
+		struct new_utsname tmp;
+		down_read(&uts_sem);
+		memcpy(&tmp, utsname(), sizeof(tmp));
+		up_read(&uts_sem);
+		susfs_spoof_uname(&tmp);
+		if (copy_to_user(name, &tmp, sizeof(tmp)))
+			errno = -EFAULT;
+	}
+#else
 	down_read(&uts_sem);
 	if (copy_to_user(name, utsname(), sizeof *name))
 		errno = -EFAULT;
 	up_read(&uts_sem);
+#endif
 
 	if (!errno && override_release(name->release, sizeof(name->release)))
 		errno = -EFAULT;
@@ -2000,6 +2016,110 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	struct task_struct *tsk;
 	unsigned char comm[sizeof(me->comm)];
 	long error;
+
+#ifdef CONFIG_KSU_SUSFS
+	/*
+	 * susfs command channel.
+	 * The KernelSU flavour shipped with this tree speaks "supercall" and has
+	 * no prctl() handler, while the ksu_susfs userspace tool talks
+	 * prctl(KERNEL_SU_OPTION, ...). Handle it here so the tool keeps working
+	 * unmodified.
+	 */
+	if (option == KERNEL_SU_OPTION && current_uid() == 0) {
+		int susfs_error = 0;
+		int handled = 1;
+		if (!access_ok(VERIFY_WRITE, (void __user *)arg5, sizeof(susfs_error)))
+			return -EFAULT;
+
+		switch (arg2) {
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		case CMD_SUSFS_ADD_SUS_PATH:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_path)))
+				return -EFAULT;
+			susfs_error = susfs_add_sus_path((struct st_susfs_sus_path __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		case CMD_SUSFS_ADD_SUS_MOUNT:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_mount)))
+				return -EFAULT;
+			susfs_error = susfs_add_sus_mount((struct st_susfs_sus_mount __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+		case CMD_SUSFS_ADD_SUS_KSTAT:
+		case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_kstat)))
+				return -EFAULT;
+			susfs_error = susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg3);
+			break;
+		case CMD_SUSFS_UPDATE_SUS_KSTAT:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_kstat)))
+				return -EFAULT;
+			susfs_error = susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MAPS
+		case CMD_SUSFS_ADD_SUS_MAPS:
+		case CMD_SUSFS_ADD_SUS_MAPS_STATICALLY:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_maps)))
+				return -EFAULT;
+			susfs_error = susfs_add_sus_maps((struct st_susfs_sus_maps __user *)arg3);
+			break;
+		case CMD_SUSFS_UPDATE_SUS_MAPS:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_maps)))
+				return -EFAULT;
+			susfs_error = susfs_update_sus_maps((struct st_susfs_sus_maps __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_FD_LINK
+		case CMD_SUSFS_ADD_SUS_PROC_FD_LINK:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_proc_fd_link)))
+				return -EFAULT;
+			susfs_error = susfs_add_sus_proc_fd_link((struct st_susfs_sus_proc_fd_link __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MEMFD
+		case CMD_SUSFS_ADD_SUS_MEMFD:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_sus_memfd)))
+				return -EFAULT;
+			susfs_error = susfs_add_sus_memfd((struct st_susfs_sus_memfd __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+		case CMD_SUSFS_ADD_TRY_UMOUNT:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_try_umount)))
+				return -EFAULT;
+			susfs_error = susfs_add_try_umount((struct st_susfs_try_umount __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+		case CMD_SUSFS_SET_UNAME:
+			if (!access_ok(VERIFY_READ, (void __user *)arg3, sizeof(struct st_susfs_uname)))
+				return -EFAULT;
+			susfs_error = susfs_set_uname((struct st_susfs_uname __user *)arg3);
+			break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+		case CMD_SUSFS_ENABLE_LOG:
+			if (arg3 != 0 && arg3 != 1)
+				return 0;
+			susfs_set_log(arg3);
+			break;
+#endif
+		default:
+			handled = 0;
+			break;
+		}
+
+		if (!handled)
+			return 0;
+
+		if (copy_to_user((void __user *)arg5, &susfs_error, sizeof(susfs_error)))
+			return -EFAULT;
+		return 0;
+	}
+#endif
 
 	error = security_task_prctl(option, arg2, arg3, arg4, arg5);
 	if (error != -ENOSYS)

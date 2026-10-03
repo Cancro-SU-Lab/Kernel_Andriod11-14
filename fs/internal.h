@@ -56,6 +56,12 @@ extern int sb_prepare_remount_readonly(struct super_block *);
 
 extern void __init mnt_init(void);
 
+/*
+ * Backported from upstream ("vfs: add path_umount"), linux-3.4 has no such
+ * helper. Required by susfs try_umount and by KernelSU's kernel_umount.
+ */
+extern int path_umount(struct path *path, int flags);
+
 DECLARE_BRLOCK(vfsmount_lock);
 
 

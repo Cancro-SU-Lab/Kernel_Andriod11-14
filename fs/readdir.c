@@ -20,6 +20,10 @@
 
 #include <asm/uaccess.h>
 
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
+
 int vfs_readdir(struct file *file, filldir_t filler, void *buf)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
@@ -263,6 +267,11 @@ static int filldir64(void * __buf, const char * name, int namlen, loff_t offset,
 		return -EINVAL;
 	if (hide_name(name, namlen) && buf->romnt)
 		return 0;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (susfs_sus_ino_for_filldir64(ino)) {
+		return 0;
+	}
+#endif
 	dirent = buf->previous;
 	if (dirent) {
 		if (__put_user(offset, &dirent->d_off))
