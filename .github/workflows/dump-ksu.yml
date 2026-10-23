@@ -14,11 +14,15 @@ concurrency:
 
 jobs:
   dump:
-    if: github.ref_type == 'branch'
+    if: github.ref_type == 'branch' || true
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [main, main-susfs]
 
     env:
-      TARGET_BRANCH: ${{ github.ref_name }}
+      TARGET_BRANCH: ${{ matrix.branch }}
       UPDATE_MESSAGE: 'chore: dump KernelSU submodule to latest [skip ci]'
       BOT_EMAIL: 'github-actions[bot]@users.noreply.github.com'
 
@@ -26,7 +30,7 @@ jobs:
       - name: Checkout parent repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ matrix.branch }}
           fetch-depth: 0
           submodules: false
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -48,7 +52,7 @@ jobs:
           upstream_ksu=$(git -C KernelSU rev-parse HEAD)
 
           if [[ "$current_ksu" == "$upstream_ksu" ]]; then
-            echo "KernelSU already up to date, nothing to commit."
+            echo "KernelSU already up to date on branch ${{ matrix.branch }}, nothing to commit."
             exit 0
           fi
 
@@ -58,13 +62,13 @@ jobs:
           last_author=$(git log -1 --format=%ae)
 
           if [[ "$last_subject" == "$UPDATE_MESSAGE" && "$last_author" == "$BOT_EMAIL" ]]; then
-            echo "Amending the previous KernelSU update commit."
+            echo "Amending the previous KernelSU update commit on branch ${{ matrix.branch }}."
             git commit --amend --no-edit --reset-author
             git push \
               --force-with-lease="refs/heads/$TARGET_BRANCH:$original_head" \
               origin "HEAD:refs/heads/$TARGET_BRANCH"
           else
-            echo "Creating a new KernelSU update commit."
+            echo "Creating a new KernelSU update commit on branch ${{ matrix.branch }}."
             git commit -m "$UPDATE_MESSAGE"
             git push origin "HEAD:refs/heads/$TARGET_BRANCH"
           fi
