@@ -3,7 +3,6 @@ name: Build Cancro Kernel
 on:
   schedule:
     - cron: '0 22 * * *'
-
   workflow_dispatch:
 
 permissions:
@@ -12,11 +11,17 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [main, main-susfs]
 
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
+          repository: ${{ github.repository }}
+          ref: ${{ matrix.branch }}
           submodules: recursive
           fetch-depth: 1
           
@@ -53,7 +58,7 @@ jobs:
       - name: Build kernel
         run: |
           set -o pipefail
-          make HOSTCFLAGS="-fcommon" LOCALVERSION="-PowerBy_Cancro-SU-Lab_${{ github.run_number }}" -j$(nproc) 2>&1 | tee build.log
+          make HOSTCFLAGS="-fcommon" LOCALVERSION="-PowerBy_Cancro-SU-Lab_${{ matrix.branch }}_${{ github.run_number }}" -j$(nproc) 2>&1 | tee build.log
           
       - name: Verify zImage
         run: |
@@ -68,20 +73,23 @@ jobs:
           cd anykernel3
           rm -rf .git .github README.md LICENSE
           mkdir -p ../out
-          ZIP_NAME="cancro-kernel-${{ github.run_number }}.zip"
+          ZIP_NAME="cancro-kernel-${{ matrix.branch }}-${{ github.run_number }}.zip"
           zip -r ../out/${ZIP_NAME} . -x ".*" -x "__MACOSX/*"
           cd ..
           cp arch/arm/boot/zImage out/
           echo "---" > out/version.txt
+          echo "Branch: ${{ matrix.branch }}" >> out/version.txt
           echo "Kernel built at $(date)" >> out/version.txt
-          echo "KernelSU commit: $(git -C KernelSU rev-parse --short HEAD)" >> out/version.txt
+          if [ -d "KernelSU" ]; then
+            echo "KernelSU commit: $(git -C KernelSU rev-parse --short HEAD)" >> out/version.txt
+          fi
           echo "---" >> out/version.txt
           cat out/version.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cancro-kernel-${{ github.run_number }}
+          name: cancro-kernel-${{ matrix.branch }}-${{ github.run_number }}
           path: out/
           retention-days: 30
 
@@ -89,7 +97,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-${{ github.run_number }}
+          name: build-log-${{ matrix.branch }}-${{ github.run_number }}
           path: |
             .config
             build.log
